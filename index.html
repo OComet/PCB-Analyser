@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCB Complexity Analyzer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── CONFIGURATION ── Remplacez la valeur ci-dessous par votre clé API Anthropic */
+  /* Voir README.md pour les instructions de déploiement */
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0f11;
+    --bg2: #18181c;
+    --bg3: #222228;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e8e8ec;
+    --text2: #8a8a96;
+    --text3: #55555f;
+    --accent: #5b8df6;
+    --accent2: #3d6fd4;
+    --ok: #3ecf8e;
+    --ok-bg: rgba(62,207,142,0.08);
+    --ok-border: rgba(62,207,142,0.2);
+    --warn: #f5a623;
+    --warn-bg: rgba(245,166,35,0.08);
+    --warn-border: rgba(245,166,35,0.2);
+    --ko: #f56565;
+    --ko-bg: rgba(245,101,101,0.08);
+    --ko-border: rgba(245,101,101,0.2);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --mono: 'DM Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .layout {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo-mark svg { width: 18px; height: 18px; fill: white; }
+  .logo-text h1 { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; }
+  .logo-text p { font-size: 12px; color: var(--text2); margin-top: 1px; }
+  .version { font-family: var(--mono); font-size: 11px; color: var(--text3); padding: 4px 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+
+  /* ── TABS ── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+    margin-bottom: 1.5rem;
+  }
+  .tab {
+    flex: 1; padding: 8px 12px; font-size: 13px; font-family: var(--sans);
+    border-radius: 7px; cursor: pointer; transition: all .15s;
+    background: transparent; border: none; color: var(--text2);
+  }
+  .tab.active { background: var(--bg3); color: var(--text); font-weight: 500; }
+  .tab:hover:not(.active) { color: var(--text); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── DROP ZONES ── */
+  .dz-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1rem; }
+  .dz-wrap { display: flex; flex-direction: column; gap: 8px; }
+  .dz-label { font-size: 11px; font-weight: 500; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; }
+  .dz {
+    border: 1px dashed var(--border2);
+    border-radius: var(--radius);
+    padding: 1.5rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all .15s;
+    background: var(--bg2);
+  }
+  .dz:hover, .dz.over { border-color: var(--accent); background: rgba(91,141,246,0.05); }
+  .dz-icon { font-size: 24px; margin-bottom: 8px; }
+  .dz p { font-size: 13px; color: var(--text2); }
+  .dz .sub { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+  /* ── FILE BADGE ── */
+  .fbadge {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-family: var(--mono);
+    background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); padding: 5px 10px;
+    color: var(--text2); overflow: hidden;
+  }
+  .fbadge .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .dot-ok { background: var(--ok); }
+  .dot-spin { background: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .fbadge span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── FILE TAGS ── */
+  .fl-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+  .fl-tag {
+    font-family: var(--mono); font-size: 10px; padding: 2px 7px;
+    border-radius: 4px; border: 1px solid;
+  }
+  .fl-layer { background: rgba(91,141,246,0.1); border-color: rgba(91,141,246,0.25); color: #7aa4f8; }
+  .fl-drill { background: rgba(245,166,35,0.08); border-color: rgba(245,166,35,0.2); color: #f5a623; }
+  .fl-outline { background: rgba(62,207,142,0.08); border-color: rgba(62,207,142,0.2); color: #3ecf8e; }
+
+  /* ── PARSED VALUES ── */
+  .pv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 12px 0; }
+  .pv-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+  }
+  .pv-card.from-spec { border-color: rgba(245,166,35,0.3); }
+  .pv-card .lbl { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .05em; }
+  .pv-card .val { font-size: 14px; font-weight: 500; margin-top: 3px; font-family: var(--mono); }
+  .spec-note { font-size: 11px; color: var(--warn); margin: 4px 0 0; }
+
+  /* ── MANUAL FORM ── */
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+  .fi { display: flex; flex-direction: column; gap: 5px; }
+  .fi label { font-size: 11px; font-weight: 500; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
+  .fi input, .fi select {
+    background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--mono); font-size: 13px;
+    padding: 8px 10px; outline: none; transition: border .15s;
+  }
+  .fi input:focus, .fi select:focus { border-color: var(--accent); }
+  .fi select option { background: var(--bg2); }
+  .fi .hint { font-size: 11px; color: var(--text3); }
+
+  /* ── BUTTON ── */
+  .btn {
+    width: 100%; padding: 11px;
+    background: var(--accent); border: none;
+    border-radius: var(--radius-sm); color: white;
+    font-family: var(--sans); font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: background .15s; margin-top: 8px;
+    letter-spacing: .01em;
+  }
+  .btn:hover { background: var(--accent2); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── AI STATUS ── */
+  .ai-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); margin: 6px 0; }
+  .spinner { width: 12px; height: 12px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── RESULT ── */
+  .result { margin-top: 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  .r-header { padding: 1.25rem 1.5rem; display: flex; align-items: flex-start; gap: 14px; }
+  .r-icon { font-size: 26px; flex-shrink: 0; margin-top: 2px; }
+  .r-title { font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+  .r-sub { font-size: 13px; margin-top: 3px; opacity: .7; }
+  .r-body { padding: 0 1.5rem 1.5rem; }
+  .r-divider { border: none; border-top: 1px solid var(--border); margin: 0 0 1rem; }
+  .clist { display: flex; flex-direction: column; gap: 8px; }
+  .citem {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    font-size: 13px; border: 1px solid;
+  }
+  .citem-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+  .citem strong { font-weight: 500; }
+  .citem .detail { font-size: 12px; opacity: .7; margin-top: 2px; }
+
+  .ok-item { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+  .warn-item { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
+  .ko-item { background: var(--ko-bg); border-color: var(--ko-border); color: var(--ko); }
+  .citem strong, .citem .detail { color: var(--text); }
+
+  .v-ok .r-header { background: var(--ok-bg); border-bottom: 1px solid var(--ok-border); }
+  .v-ok .r-title, .v-ok .r-icon { color: var(--ok); }
+  .v-warn .r-header { background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); }
+  .v-warn .r-title, .v-warn .r-icon { color: var(--warn); }
+  .v-ko .r-header { background: var(--ko-bg); border-bottom: 1px solid var(--ko-border); }
+  .v-ko .r-title, .v-ko .r-icon { color: var(--ko); }
+
+  /* ── CONFIG WARNING ── */
+  .config-warn {
+    background: var(--warn-bg); border: 1px solid var(--warn-border);
+    border-radius: var(--radius); padding: 12px 16px;
+    font-size: 13px; color: var(--warn); margin-bottom: 1.5rem;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .config-warn code { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,.3); padding: 1px 5px; border-radius: 3px; }
+  .config-warn a { color: var(--accent); }
+
+  @media (max-width: 560px) {
+    .dz-row { grid-template-columns: 1fr; }
+    .form-grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <header>
+    <div class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 3h7v7H3zm11 0h7v7h-7zm0 11h7v7h-7zM3 14h2v2H3zm0 4h2v2H3zm4-4h2v2H7zm0 4h2v2H7zm4-7h2v2h-2zm0 4h2v2h-2zm0 4h2v2h-2z"/>
+        </svg>
+      </div>
+      <div class="logo-text">
+        <h1>PCB Analyzer</h1>
+        <p>Qualification de complexité pour chiffrage</p>
+      </div>
+    </div>
+    <span class="version">v1.0</span>
+  </header>
+
+  <div id="config-warning" class="config-warn" style="display:none">
+    <span>⚠</span>
+    <div>
+      <strong>Clé API non configurée</strong> — l'analyse des specs PDF/DOC/XLS ne fonctionnera pas.<br>
+      Ouvrez le fichier <code>pcb-analyzer.html</code> et remplacez <code>VOTRE_CLE_API_ANTHROPIC</code> par votre clé.<br>
+      <a href="https://console.anthropic.com/settings/keys" target="_blank">Obtenir une clé API →</a>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('file')">📁 Fichiers Gerber + Spec</button>
+    <button class="tab" onclick="switchTab('manual')">✏️ Saisie manuelle</button>
+  </div>
+
+  <!-- PANEL FICHIERS -->
+  <div id="panel-file" class="panel active">
+    <div class="dz-row">
+      <div class="dz-wrap">
+        <p class="dz-label">Gerbers</p>
+        <div class="dz" id="dz-gbr"
+          onclick="document.getElementById('fi-gbr').click()"
+          ondragover="dzo(event,'dz-gbr')" ondragleave="dzl('dz-gbr')" ondrop="dzd(event,'gbr')">
+          <div class="dz-icon">🗜</div>
+          <p>ZIP Gerber</p>
+          <p class="sub">KiCad · Altium · Eagle · Cadence · Zuken</p>
+        </div>
+        <input type="file" id="fi-gbr" accept=".zip" style="display:none" onchange="loadGbr(event)">
+        <div id="gbr-status"></div>
+      </div>
+      <div class="dz-wrap">
+        <p class="dz-label">Spec client <span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(optionnel)</span></p>
+        <div class="dz" id="dz-spec"
+          onclick="document.getElementById('fi-spec').click()"
+          ondragover="dzo(event,'dz-spec')" ondragleave="dzl('dz-spec')" ondrop="dzd(event,'spec')">
+          <div class="dz-icon">📄</div>
+          <p>PDF · DOC · TXT · XLS</p>
+          <p class="sub">Spécification technique client</p>
+        </div>
+        <input type="file" id="fi-spec" accept=".pdf,.doc,.docx,.txt,.xls,.xlsx" style="display:none" onchange="loadSpec(event)">
+        <div id="spec-status"></div>
+      </div>
+    </div>
+
+    <div id="parsed-section" style="display:none">
+      <div id="fl-display" class="fl-list"></div>
+      <div id="pv-display" class="pv-grid"></div>
+    </div>
+
+    <button class="btn" id="btn-analyze-files" onclick="analyzeFromFiles()" style="display:none">
+      Analyser la complexité
+    </button>
+  </div>
+
+  <!-- PANEL MANUEL -->
+  <div id="panel-manual" class="panel">
+    <div class="form-grid">
+      <div class="fi">
+        <label for="p-layers">Nombre de couches</label>
+        <input type="number" id="p-layers" min="1" max="40" placeholder="ex. 4">
+      </div>
+      <div class="fi">
+        <label for="p-track">Largeur / isolement min (µm)</label>
+        <input type="number" id="p-track" min="50" max="500" placeholder="ex. 100">
+        <span class="hint">Valeur la plus petite des deux</span>
+      </div>
+      <div class="fi">
+        <label for="p-vias">Vias spéciaux</label>
+        <select id="p-vias">
+          <option value="none">Traversants uniquement</option>
+          <option value="blind">Borgnes présents</option>
+          <option value="buried">Enterrés présents</option>
+          <option value="both">Borgnes + enterrés</option>
+        </select>
+      </div>
+      <div class="fi">
+        <label for="p-w">Largeur PCB (mm)</label>
+        <input type="number" id="p-w" min="1" placeholder="ex. 120">
+      </div>
+      <div class="fi">
+        <label for="p-h">Hauteur PCB (mm)</label>
+        <input type="number" id="p-h" min="1" placeholder="ex. 80">
+      </div>
+      <div class="fi">
+        <label for="p-thick">Épaisseur (mm) — optionnel</label>
+        <input type="number" id="p-thick" min="0.2" max="4" step="0.1" placeholder="ex. 1.6">
+      </div>
+    </div>
+    <button class="btn" onclick="analyzeManual()">Analyser la complexité</button>
+  </div>
+
+  <div id="result"></div>
+
+</div>
+
+<script>
+// ════════════════════════════════════════════════
+//  ⚙️  CONFIGURATION — remplacez cette valeur
+// ════════════════════════════════════════════════
+const ANTHROPIC_API_KEY = 'VOTRE_CLE_API_ANTHROPIC';
+// ════════════════════════════════════════════════
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let gbrData = null, specFromAI = null;
+
+// Afficher warning si clé non configurée
+window.addEventListener('load', () => {
+  if (ANTHROPIC_API_KEY === 'VOTRE_CLE_API_ANTHROPIC') {
+    document.getElementById('config-warning').style.display = 'flex';
+  }
+});
+
+/* ── UI helpers ── */
+function switchTab(t) {
+  document.querySelectorAll('.tab').forEach((b,i) => b.classList.toggle('active', (i===0&&t==='file')||(i===1&&t==='manual')));
+  document.getElementById('panel-file').classList.toggle('active', t==='file');
+  document.getElementById('panel-manual').classList.toggle('active', t==='manual');
+  document.getElementById('result').innerHTML = '';
+}
+function dzo(e,id) { e.preventDefault(); document.getElementById(id).classList.add('over'); }
+function dzl(id) { document.getElementById(id).classList.remove('over'); }
+function dzd(e,t) { e.preventDefault(); dzl('dz-'+t); const f=e.dataTransfer.files[0]; if(f) t==='gbr'?processGbr(f):processSpec(f); }
+function loadGbr(e) { const f=e.target.files[0]; if(f) processGbr(f); }
+function loadSpec(e) { const f=e.target.files[0]; if(f) processSpec(f); }
+
+function setStatus(id, html) { document.getElementById(id).innerHTML = html; }
+function fileBadge(name, state) {
+  const dot = state==='ok' ? 'dot-ok' : 'dot-spin';
+  return `<div class="fbadge"><div class="dot ${dot}"></div><span>${name}</span></div>`;
+}
+
+/* ── GERBER ── */
+async function processGbr(file) {
+  setStatus('gbr-status', fileBadge(file.name, 'loading'));
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const files = {};
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (!entry.dir) { const s = name.split('/').pop(); if(s) files[s] = await entry.async('string'); }
+    }
+    gbrData = parseGerbers(files);
+    setStatus('gbr-status', fileBadge(file.name, 'ok'));
+    refreshDisplay();
+    checkReady();
+  } catch(e) {
+    setStatus('gbr-status', `<p style="font-size:12px;color:var(--ko);margin-top:4px">Erreur ZIP : ${e.message}</p>`);
+  }
+}
+
+/* ── SPEC ── */
+async function processSpec(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  setStatus('spec-status', fileBadge(file.name, 'loading'));
+  document.getElementById('result').innerHTML = '';
+  let text = '';
+  try {
+    if (ext === 'pdf') text = await extractPdfText(file);
+    else if (['xlsx','xls'].includes(ext)) text = await extractXlsText(file);
+    else text = await file.text();
+  } catch(e) {
+    setStatus('spec-status', `<p style="font-size:12px;color:var(--ko);margin-top:4px">Erreur lecture : ${e.message}</p>`);
+    return;
+  }
+  setStatus('spec-status', fileBadge(file.name, 'loading') + `<div class="ai-status"><div class="spinner"></div> Analyse IA en cours…</div>`);
+  specFromAI = await extractSpecWithAI(text);
+  const ok = specFromAI && Object.keys(specFromAI).length > 0;
+  setStatus('spec-status', fileBadge(file.name, 'ok') + (ok ? `<p class="spec-note" style="margin-top:4px;font-size:11px">✦ ${Object.keys(specFromAI).length} paramètre(s) extraits</p>` : `<p style="font-size:11px;color:var(--text3);margin-top:4px">Aucun paramètre détecté</p>`));
+  refreshDisplay();
+  checkReady();
+}
+
+async function extractPdfText(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for (let i = 1; i <= Math.min(pdf.numPages, 15); i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return text;
+}
+
+async function extractXlsText(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  let text = '';
+  wb.SheetNames.forEach(sn => { text += XLSX.utils.sheet_to_txt(wb.Sheets[sn]) + '\n'; });
+  return text;
+}
+
+async function extractSpecWithAI(text) {
+  if (ANTHROPIC_API_KEY === 'VOTRE_CLE_API_ANTHROPIC') return {};
+  const prompt = `Tu es un expert en fabrication de circuits imprimés PCB. Analyse ce document de spécification et extrait les paramètres techniques. Réponds UNIQUEMENT en JSON valide, sans markdown.
+
+Paramètres à extraire (omets ceux non mentionnés) :
+- layers : nombre de couches (entier)
+- min_track_um : largeur de piste minimum en microns
+- min_space_um : isolement minimum en microns
+- blind_vias : vias borgnes présents (true/false)
+- buried_vias : vias enterrés présents (true/false)
+- width_mm : largeur PCB en mm
+- height_mm : hauteur PCB en mm
+- thickness_mm : épaisseur PCB en mm
+- surface_finish : finition surface (ex: ENIG, HAL, OSP)
+- notes : remarques importantes (string courte)
+
+Document :
+${text.slice(0, 8000)}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await resp.json();
+    const raw = data.content?.map(b => b.text||'').join('') || '';
+    return JSON.parse(raw.replace(/```json|```/g,'').trim());
+  } catch(e) { return {}; }
+}
+
+/* ── DISPLAY ── */
+function mergeData() {
+  const g = gbrData || {};
+  const ai = specFromAI || {};
+  const minTrack = (ai.min_track_um || ai.min_space_um)
+    ? Math.min(ai.min_track_um||9999, ai.min_space_um||9999)
+    : (g.minTrack || null);
+  const hasBlind = 'blind_vias' in ai ? ai.blind_vias : (g.hasBlind||false);
+  const hasBuried = 'buried_vias' in ai ? ai.buried_vias : (g.hasBuried||false);
+  return {
+    layers: ai.layers || g.layers || null,
+    track: minTrack === 9999 ? null : minTrack,
+    vias: hasBlind&&hasBuried?'both':hasBlind?'blind':hasBuried?'buried':'none',
+    width: ai.width_mm || g.width || null,
+    height: ai.height_mm || g.height || null,
+    thickness: ai.thickness_mm || null,
+  };
+}
+
+function refreshDisplay() {
+  if (!gbrData && !specFromAI) return;
+  document.getElementById('parsed-section').style.display = 'block';
+  const g = gbrData || { classified: { layers:[], drills:[], outlines:[] } };
+  const fl = document.getElementById('fl-display');
+  let h = '';
+  g.classified.layers.forEach(f => h += `<span class="fl-tag fl-layer">${f}</span>`);
+  g.classified.drills.forEach(f => h += `<span class="fl-tag fl-drill">${f}</span>`);
+  g.classified.outlines.forEach(f => h += `<span class="fl-tag fl-outline">${f}</span>`);
+  fl.innerHTML = h;
+  const m = mergeData();
+  const ai = specFromAI || {};
+  const viasLabel = m.vias==='both'?'Borgnes + enterrés':m.vias==='blind'?'Borgnes':m.vias==='buried'?'Enterrés':'Traversants';
+  const cards = [
+    { lbl:'Couches', val: m.layers??'—', spec:'layers' in ai },
+    { lbl:'Min piste/isol.', val: m.track ? Math.round(m.track)+' µm' : '—', spec:'min_track_um' in ai||'min_space_um' in ai },
+    { lbl:'Vias', val: viasLabel, spec:'blind_vias' in ai||'buried_vias' in ai },
+    { lbl:'Dimensions', val: m.width ? m.width+'×'+m.height+' mm' : '—', spec:'width_mm' in ai },
+    { lbl:'Épaisseur', val: m.thickness ? m.thickness+' mm' : '—', spec:'thickness_mm' in ai },
+  ];
+  if (ai.surface_finish) cards.push({ lbl:'Finition', val: ai.surface_finish, spec:true });
+  document.getElementById('pv-display').innerHTML =
+    cards.map(c => `<div class="pv-card${c.spec?' from-spec':''}"><div class="lbl">${c.lbl}${c.spec?' <span style="color:var(--warn)">✦</span>':''}</div><div class="val">${c.val}</div></div>`).join('')
+    + (specFromAI && Object.keys(specFromAI).length ? `<p class="spec-note" style="grid-column:1/-1;margin-top:2px">✦ Valeur extraite de la spec (prioritaire sur les Gerbers)</p>` : '');
+}
+
+function checkReady() {
+  document.getElementById('btn-analyze-files').style.display = (gbrData||specFromAI) ? 'block' : 'none';
+}
+
+/* ── GERBER PARSER ── */
+function classifyFile(fname, content) {
+  const f = fname.toLowerCase();
+  if (content) {
+    const h = content.slice(0, 3000);
+    const ff = h.match(/\.FileFunction,Copper,L(\d+),(Top|Bot|Inner)/i);
+    if (ff) { const o=ff[2].toLowerCase()==='top'?0:ff[2].toLowerCase()==='bot'?999:parseInt(ff[1]); return {type:'layer',order:o}; }
+    if (/\.FileFunction,(Profile|BoardOutline)/i.test(h)) return {type:'outline'};
+    if (/\.FileFunction,.*Drill/i.test(h)) {
+      if (/Blind/i.test(h)) return {type:'drill_blind'};
+      if (/Buried/i.test(h)) return {type:'drill_buried'};
+      return {type:'drill'};
+    }
+    if (/\.FileFunction,(Soldermask|Legend|Paste|Fab|Assembly|NonPlated|Glue)/i.test(h)) return {type:'other'};
+  }
+  if (/[_-]f\.cu(\.|$)/.test(f)||f==='f.cu') return {type:'layer',order:0};
+  if (/[_-]b\.cu(\.|$)/.test(f)||f==='b.cu') return {type:'layer',order:999};
+  const kci=f.match(/[_-]in(\d+)\.cu(\.|$)/); if(kci) return {type:'layer',order:parseInt(kci[1])};
+  if (/\.gtl$/.test(f)) return {type:'layer',order:0};
+  if (/\.gbl$/.test(f)) return {type:'layer',order:999};
+  const ali=f.match(/\.g(\d+)l?$/); if(ali&&parseInt(ali[1])<=30) return {type:'layer',order:parseInt(ali[1])};
+  const alp=f.match(/\.gp(\d+)$/); if(alp) return {type:'layer',order:200+parseInt(alp[1])};
+  const num=f.replace(/\.(gbr|ger|art|pho)$/,'').match(/(?:copper|layer|signal|art|l|cu)[_-]?(\d{1,2})$/);
+  if(num&&parseInt(num[1])<=40) return {type:'layer',order:parseInt(num[1])};
+  const zk=f.match(/_l(\d+)\.(gbr|ger)$/); if(zk) return {type:'layer',order:parseInt(zk[1])};
+  if (/\.(drl|exc|xln|ncd|dri)$/.test(f)||/drill/.test(f)) {
+    if (/blind|borg/.test(f)) return {type:'drill_blind'};
+    if (/buried|bury|enterre|inner/.test(f)) return {type:'drill_buried'};
+    if (/[1-9][-_][1-9]|top.*in|in.*bot/.test(f)) return /^[^_-]*1[-_]2|top[-_]in|l1[-_]l2/.test(f)?{type:'drill_blind'}:{type:'drill_buried'};
+    return {type:'drill'};
+  }
+  if (/\.(gko|gm1|gml)$/.test(f)||/edge|outline|contour|border|profile|keepout/.test(f)) return {type:'outline'};
+  if (/\.(gts|gbs|gto|gbo|gtp|gbp|sts|sbs|paste|mask|silk|legend|fab|assy)/.test(f)) return {type:'other'};
+  if (/\.(gbr|ger|art)$/.test(f)) return {type:'unknown_gbr'};
+  return {type:'other'};
+}
+
+function extractMinAperture(content) {
+  let min = null;
+  for (const m of content.matchAll(/%ADD\d+[CROP],([0-9.]+)/g)) {
+    const v = parseFloat(m[1])*1000;
+    if (v>=30&&v<=2000) { if(min===null||v<min) min=v; }
+  }
+  return min;
+}
+
+function extractDimensions(content) {
+  const xs=[], ys=[];
+  for (const m of content.matchAll(/X(-?\d+)Y(-?\d+)/g)) { xs.push(parseInt(m[1])); ys.push(parseInt(m[2])); }
+  if (xs.length<2) return null;
+  const xd=Math.abs(Math.max(...xs)-Math.min(...xs)), yd=Math.abs(Math.max(...ys)-Math.min(...ys));
+  const isMM=!/MOIN/.test(content);
+  const fmtF=content.match(/%FSL?A?X(\d)(\d)Y\d\d\*%/);
+  let factor=fmtF?Math.pow(10,-parseInt(fmtF[2])):(xd>1e7?1e-7:xd>1e5?1e-5:xd>1e3?1e-3:1);
+  if(!isMM) factor*=25.4;
+  const w=xd*factor, h=yd*factor;
+  if(w<3||w>1500||h<3||h>1500) return null;
+  return {w:Math.round(w),h:Math.round(h)};
+}
+
+function parseGerbers(files) {
+  const res = { layers:0, minTrack:null, hasBlind:false, hasBuried:false, width:null, height:null, classified:{layers:[],drills:[],outlines:[]} };
+  const orders = new Set();
+  for (const [fname, content] of Object.entries(files)) {
+    const cls = classifyFile(fname, content);
+    if (cls.type==='layer') { orders.add(cls.order); res.classified.layers.push(fname); const m=extractMinAperture(content); if(m&&(res.minTrack===null||m<res.minTrack)) res.minTrack=m; }
+    else if (cls.type==='drill_blind') { res.hasBlind=true; res.classified.drills.push(fname+' [borgne]'); }
+    else if (cls.type==='drill_buried') { res.hasBuried=true; res.classified.drills.push(fname+' [enterré]'); }
+    else if (cls.type==='drill') { res.classified.drills.push(fname); }
+    else if (cls.type==='outline') { res.classified.outlines.push(fname); if(!res.width){const d=extractDimensions(content);if(d){res.width=d.w;res.height=d.h;}} }
+  }
+  res.layers = orders.size;
+  if ((res.hasBlind||res.hasBuried) && res.layers>0 && res.layers<4) { res.hasBlind=false; res.hasBuried=false; }
+  return res;
+}
+
+/* ── ANALYZE ── */
+function analyzeFromFiles() { renderResult(analyze(mergeData())); }
+
+function analyzeManual() {
+  renderResult(analyze({
+    layers: parseInt(document.getElementById('p-layers').value)||null,
+    track: parseFloat(document.getElementById('p-track').value)||null,
+    vias: document.getElementById('p-vias').value,
+    width: parseFloat(document.getElementById('p-w').value)||null,
+    height: parseFloat(document.getElementById('p-h').value)||null,
+    thickness: parseFloat(document.getElementById('p-thick').value)||null,
+  }));
+}
+
+function analyze(d) {
+  const issues=[], warnings=[], oks=[];
+  let verdict='ok';
+  if (d.layers) {
+    if (d.layers>8) { issues.push({text:d.layers+' couches — dépasse le seuil de 8',detail:'Demande de prix obligatoire'}); verdict='ko'; }
+    else oks.push({text:d.layers+' couche'+(d.layers>1?'s':'')+' — standard'});
+  }
+  if (d.track) {
+    if (d.track<100) { issues.push({text:'Piste/isolement min '+Math.round(d.track)+' µm — sous 100 µm',detail:'Technologie HDI requise'}); verdict='ko'; }
+    else oks.push({text:'Piste/isolement '+Math.round(d.track)+' µm — OK'});
+  }
+  if (d.vias!=='none') {
+    const lbl=d.vias==='both'?'borgnes + enterrés':d.vias==='blind'?'borgnes':'enterrés';
+    issues.push({text:'Vias '+lbl+' détectés',detail:'Demande de prix systématique'}); verdict='ko';
+  } else if (d.layers>=4) oks.push({text:'Vias traversants uniquement — standard'});
+  if (d.width&&d.height) {
+    if (d.width>300||d.height>390) { issues.push({text:'Dimensions '+d.width+'×'+d.height+' mm — hors gabarit',detail:'Max 300 × 390 mm'}); verdict='ko'; }
+    else if (Math.min(d.width,d.height)<20) { warnings.push({text:'Petite carte : '+d.width+'×'+d.height+' mm',detail:'Attention panélisation et manutention'}); if(verdict==='ok') verdict='warn'; }
+    else oks.push({text:'Dimensions '+d.width+'×'+d.height+' mm — dans le gabarit'});
+  }
+  if (d.thickness) {
+    if (d.thickness<=1.0) { warnings.push({text:'Épaisseur '+d.thickness+' mm ≤ 1 mm',detail:'Vérifier disponibilité et surcoût'}); if(verdict==='ok') verdict='warn'; }
+    else oks.push({text:'Épaisseur '+d.thickness+' mm — standard'});
+  }
+  return {verdict,issues,warnings,oks};
+}
+
+function renderResult(r) {
+  const vm = {
+    ok:   {cls:'v-ok',   icon:'✓', title:'Chiffrable en ligne',       sub:'PCB standard — Safe PCB / pcbprototype.com'},
+    warn: {cls:'v-warn', icon:'⚠', title:'Chiffrable avec attention', sub:'Points à vérifier avant commande'},
+    ko:   {cls:'v-ko',   icon:'✕', title:'Demande de prix requise',   sub:'PCB complexe — ne pas chiffrer en ligne'},
+  };
+  const v = vm[r.verdict];
+  let h = `<div class="result ${v.cls}">
+    <div class="r-header"><div class="r-icon">${v.icon}</div><div><div class="r-title">${v.title}</div><div class="r-sub">${v.sub}</div></div></div>
+    <div class="r-body"><hr class="r-divider"><div class="clist">`;
+  r.issues.forEach(i => { h+=`<div class="citem ko-item"><span class="citem-icon">✕</span><div><strong>${i.text}</strong>${i.detail?`<div class="detail">${i.detail}</div>`:''}</div></div>`; });
+  r.warnings.forEach(w => { h+=`<div class="citem warn-item"><span class="citem-icon">⚠</span><div><strong>${w.text}</strong>${w.detail?`<div class="detail">${w.detail}</div>`:''}</div></div>`; });
+  r.oks.forEach(o => { h+=`<div class="citem ok-item"><span class="citem-icon">✓</span><div><strong>${o.text}</strong></div></div>`; });
+  h += `</div></div></div>`;
+  const el = document.getElementById('result');
+  el.innerHTML = h;
+  el.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+</script>
+</body>
+</html>
