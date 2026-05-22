@@ -82,6 +82,32 @@
   .logo-text p { font-size: 12px; color: var(--text2); margin-top: 1px; }
   .version { font-family: var(--mono); font-size: 11px; color: var(--text3); padding: 4px 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 
+  /* ── API KEY SETTINGS ── */
+  .api-bar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 14px;
+    margin-bottom: 1.5rem;
+  }
+  .api-bar label { font-size: 12px; color: var(--text2); white-space: nowrap; flex-shrink: 0; }
+  .api-bar input {
+    flex: 1; background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 6px 10px;
+    outline: none; transition: border .15s; min-width: 0;
+  }
+  .api-bar input:focus { border-color: var(--accent); }
+  .api-bar .api-status { font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+  .api-bar .api-status.ok { color: var(--ok); }
+  .api-bar .api-status.empty { color: var(--text3); }
+  .api-save {
+    padding: 6px 12px; font-size: 12px; font-family: var(--sans);
+    background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text2);
+    cursor: pointer; transition: all .15s; white-space: nowrap; flex-shrink: 0;
+  }
+  .api-save:hover { border-color: var(--accent); color: var(--accent); }
+
   /* ── TABS ── */
   .tabs {
     display: flex;
@@ -251,13 +277,11 @@
     <span class="version">v1.0</span>
   </header>
 
-  <div id="config-warning" class="config-warn" style="display:none">
-    <span>⚠</span>
-    <div>
-      <strong>Clé API non configurée</strong> — l'analyse des specs PDF/DOC/XLS ne fonctionnera pas.<br>
-      Ouvrez le fichier <code>pcb-analyzer.html</code> et remplacez <code>VOTRE_CLE_API_ANTHROPIC</code> par votre clé.<br>
-      <a href="https://console.anthropic.com/settings/keys" target="_blank">Obtenir une clé API →</a>
-    </div>
+  <div class="api-bar">
+    <label for="api-key-input">🔑 Clé API Anthropic</label>
+    <input type="password" id="api-key-input" placeholder="sk-ant-…" oninput="onApiKeyInput()" autocomplete="off" spellcheck="false">
+    <button class="api-save" onclick="saveApiKey()">Sauvegarder</button>
+    <span class="api-status empty" id="api-key-status">Non configurée</span>
   </div>
 
   <div class="tabs">
@@ -346,23 +370,48 @@
 </div>
 
 <script>
-// ════════════════════════════════════════════════
-//  ⚙️  CONFIGURATION — remplacez cette valeur
-// ════════════════════════════════════════════════
-const ANTHROPIC_API_KEY = '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';
-// ════════════════════════════════════════════════
+// ── API KEY — stockée dans localStorage du navigateur ──
+function getApiKey() { return localStorage.getItem('pcb_anthropic_key') || ''; }
+
+function saveApiKey() {
+  const val = document.getElementById('api-key-input').value.trim();
+  if (val) { localStorage.setItem('pcb_anthropic_key', val); }
+  else { localStorage.removeItem('pcb_anthropic_key'); }
+  updateApiStatus();
+}
+
+function onApiKeyInput() { updateApiStatus(); }
+
+function updateApiStatus() {
+  const input = document.getElementById('api-key-input');
+  const status = document.getElementById('api-key-status');
+  const val = input.value.trim() || getApiKey();
+  if (val && val.startsWith('sk-ant-')) {
+    status.textContent = '✓ Configurée';
+    status.className = 'api-status ok';
+  } else if (val) {
+    status.textContent = '⚠ Format invalide';
+    status.className = 'api-status';
+    status.style.color = 'var(--warn)';
+  } else {
+    status.textContent = 'Non configurée';
+    status.className = 'api-status empty';
+  }
+}
+
+// Charger la clé sauvegardée au démarrage
+window.addEventListener('load', () => {
+  const saved = getApiKey();
+  if (saved) {
+    document.getElementById('api-key-input').value = saved;
+    updateApiStatus();
+  }
+});
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 let gbrData = null, specFromAI = null;
-
-// Afficher warning si clé non configurée
-window.addEventListener('load', () => {
-  if (ANTHROPIC_API_KEY === 'VOTRE_CLE_API_ANTHROPIC') {
-    document.getElementById('config-warning').style.display = 'flex';
-  }
-});
 
 /* ── UI helpers ── */
 function switchTab(t) {
@@ -444,7 +493,8 @@ async function extractXlsText(file) {
 }
 
 async function extractSpecWithAI(text) {
-  if (ANTHROPIC_API_KEY === 'VOTRE_CLE_API_ANTHROPIC') return {};
+  const key = document.getElementById('api-key-input').value.trim() || getApiKey();
+  if (!key || !key.startsWith('sk-ant-')) return {};
   const prompt = `Tu es un expert en fabrication de circuits imprimés PCB. Analyse ce document de spécification et extrait les paramètres techniques. Réponds UNIQUEMENT en JSON valide, sans markdown.
 
 Paramètres à extraire (omets ceux non mentionnés) :
@@ -465,7 +515,7 @@ ${text.slice(0, 8000)}`;
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
     });
     const data = await resp.json();
